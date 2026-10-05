@@ -237,5 +237,19 @@ button.sheet-price:focus-visible { outline: 3px solid #fff; outline-offset: 2px;
   flex: none; border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer;
   background: var(--orange); color: #fff; font: 800 14px/1 Montserrat, system-ui, sans-serif;
 }
-body.has-cookie .cart-bar { bottom: calc(110px + env(safe-area-inset-bottom, 0px)); }
-body.has-cookie main { padding-bottom: 120px; }
+body.has-float .cart-bar { bottom: calc(110px + env(safe-area-inset-bottom, 0px)); }
+body.has-float main { padding-bottom: 120px; }
+
+/* Предложение установить приложение */
+.promo img { flex: none; border-radius: 12px; }
+.promo p { color: var(--muted); }
+.promo p b { display: block; color: var(--text); font-size: 13px; margin-bottom: 2px; }
+.promo-actions { flex: none; display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.promo-later {
+  border: 0; background: none; padding: 6px 8px; cursor: pointer;
+  color: var(--muted); font: 700 13px/1 Montserrat, system-ui, sans-serif;
+}
+.ios-share {
+  display: inline-block; width: 14px; height: 16px; vertical-align: -2px; margin: 0 2px;
+  background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 18' fill='none' stroke='%23f4f1ea' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 11V1M3.5 4.5 7 1l3.5 3.5M4 7H2v10h10V7h-2'/%3E%3C/svg%3E");
+}

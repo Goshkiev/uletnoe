@@ -327,6 +327,8 @@
           pickup_at: pickupAt,
           comment: form.comment.trim() || null,
           consent: true,
+          source: standalone ? 'app' : 'web',
+          install_id: standalone ? installId().id : null,
         });
       } catch (e) {
         sending = false; error = e.message; draw();
@@ -457,12 +459,91 @@
     el.querySelector('button').addEventListener('click', () => {
       store.set(COOKIE_KEY, { accepted: new Date().toISOString() });
       el.remove();
-      document.body.classList.remove('has-cookie');
+      document.body.classList.remove('has-float');
+      schedulePromo();
     });
     document.body.appendChild(el);
-    document.body.classList.add('has-cookie');
+    document.body.classList.add('has-float');
   }
+
+  // ---------- Приложение на телефон ----------
+
+  const INSTALL_KEY = 'uletnoe.install.v1';
+  const PROMO_KEY = 'uletnoe.promo.v1';
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const ua = navigator.userAgent;
+  const isIos = /iphone|ipad|ipod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+  const isIosSafari = isIos && /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|YaBrowser|OPiOS|Instagram|FBAN|VK/.test(ua);
+  const platform = /android/i.test(ua) ? 'android' : isIos ? 'ios' : /Windows|Macintosh|Linux|CrOS/.test(ua) ? 'desktop' : 'other';
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
+    : '10000000-1000-4000-8000-100000000000'.replace(/[018]/g, (c) => (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
+
+  function installId() {
+    let v = store.get(INSTALL_KEY, null);
+    if (!v || !v.id) { v = { id: uuid() }; store.set(INSTALL_KEY, v); }
+    return v;
+  }
+  // Считаем установку при первом запуске с главного экрана и отмечаем, что приложением пользуются (раз в день).
+  function registerInstall() {
+    if (!api || !api.registerInstall) return;
+    const v = installId();
+    const today = new Date().toDateString();
+    if (v.day === today) return;
+    api.registerInstall(v.id, platform).then(() => { v.day = today; store.set(INSTALL_KEY, v); }).catch(() => {});
+  }
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if (standalone) registerInstall();
+
+  let deferredPrompt = null;
+  let promoEl = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredPrompt = e; schedulePromo(); });
+  window.addEventListener('appinstalled', () => { registerInstall(); hidePromo(); });
+
+  function hidePromo() {
+    if (promoEl) { promoEl.remove(); promoEl = null; }
+    if (!document.querySelector('.cookie')) document.body.classList.remove('has-float');
+  }
+  let promoTimer = null;
+  function schedulePromo() {
+    if (standalone || promoEl || promoTimer || document.querySelector('.cookie')) return;
+    const last = store.get(PROMO_KEY, null);
+    if (last && Date.now() - last.dismissed < 14 * 86400e3) return;
+    if (!deferredPrompt && !isIosSafari) return;
+    promoTimer = setTimeout(() => { promoTimer = null; showPromo(); }, 2500);
+  }
+  function showPromo() {
+    if (standalone || promoEl || document.querySelector('.cookie') || (!deferredPrompt && !isIosSafari)) return;
+    promoEl = document.createElement('div');
+    promoEl.className = 'cookie promo';
+    promoEl.setAttribute('role', 'dialog');
+    promoEl.setAttribute('aria-label', 'Установить приложение');
+    promoEl.innerHTML = deferredPrompt ? `
+      <img src="img/icon-192.png" alt="" width="44" height="44">
+      <p><b>Установите «Улётное» на телефон</b>В следующий раз закажете в пару касаний, без QR-кода.</p>
+      <span class="promo-actions">
+        <button type="button" class="cookie-ok" data-install>Установить</button>
+        <button type="button" class="promo-later" data-later>Не сейчас</button>
+      </span>` : `
+      <img src="img/icon-192.png" alt="" width="44" height="44">
+      <p><b>Добавьте «Улётное» на экран «Домой»</b>Нажмите <span class="ios-share" aria-label="Поделиться"></span> внизу экрана и выберите «На экран „Домой“».</p>
+      <span class="promo-actions"><button type="button" class="promo-later" data-later>Понятно</button></span>`;
+    promoEl.addEventListener('click', async (e) => {
+      if (e.target.closest('[data-later]')) { store.set(PROMO_KEY, { dismissed: Date.now() }); hidePromo(); }
+      if (e.target.closest('[data-install]') && deferredPrompt) {
+        const p = deferredPrompt; deferredPrompt = null;
+        p.prompt();
+        const choice = await p.userChoice.catch(() => ({}));
+        if (choice.outcome !== 'accepted') store.set(PROMO_KEY, { dismissed: Date.now() });
+        hidePromo();
+      }
+    });
+    document.body.appendChild(promoEl);
+    document.body.classList.add('has-float');
+  }
+
   cookieBanner();
+  schedulePromo();
 
   fetch('menu.json', { cache: 'no-cache' })
     .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })

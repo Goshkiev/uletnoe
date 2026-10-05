@@ -27,6 +27,7 @@
     mode: 'server',
     placeOrder: (order) => call('POST', '/orders', order),
     orderStatus: (id) => call('GET', `/orders/${encodeURIComponent(id)}`),
+    registerInstall: (id, platform) => call('POST', '/installs', { id, platform }),
     staff: {
       login: (login, password) => call('POST', '/staff/login', { login, password }),
       logout: () => call('POST', '/staff/logout', {}),
@@ -42,6 +43,7 @@
       },
       pushKey: () => call('GET', '/staff/push/key').then((d) => d.publicKey),
       pushSubscribe: (sub) => call('POST', '/staff/push/subscribe', sub),
+      stats: () => call('GET', '/staff/stats'),
     },
   };
 
@@ -49,6 +51,8 @@
 
   const KEY = 'uletnoe.demo.orders';
   const SESSION = 'uletnoe.demo.session';
+  const INSTALLS = 'uletnoe.demo.installs';
+  const readI = () => { try { return JSON.parse(localStorage.getItem(INSTALLS)) || []; } catch (e) { return []; } };
   const read = () => { try { return JSON.parse(localStorage.getItem(KEY)) || []; } catch (e) { return []; } };
   const write = (list) => { try { localStorage.setItem(KEY, JSON.stringify(list)); } catch (e) { /* ignore */ } };
   const bc = 'BroadcastChannel' in window ? new BroadcastChannel('uletnoe-demo') : null;
@@ -67,6 +71,7 @@
       const items = o.items.map((i) => ({ id: i.id, name: i.name, variant: i.variant || null, price: i.price, qty: i.qty }));
       const now = new Date().toISOString();
       const order = { id: crypto.randomUUID(), number, created_at: now, updated_at: now, status: 'new', customer_name: o.name || null,
+        source: o.source === 'app' ? 'app' : 'web', install_id: o.install_id || null,
         phone: o.phone, pickup_at: o.pickup_at || null, comment: o.comment || null, items, total: items.reduce((s, i) => s + i.price * i.qty, 0) };
       list.push(order); write(list); emit(order);
       return later({ id: order.id, number, total: order.total });
@@ -76,7 +81,35 @@
       if (!o) throw Object.assign(new Error('Заказ не найден'), { status: 404 });
       return later({ number: o.number, status: o.status, pickup_at: o.pickup_at, total: o.total });
     },
+    async registerInstall(id, platform) {
+      const list = readI();
+      const now = new Date().toISOString();
+      const i = list.find((x) => x.id === id);
+      if (i) { i.last_seen = now; i.launches++; } else list.push({ id, platform, created_at: now, last_seen: now, launches: 1 });
+      try { localStorage.setItem(INSTALLS, JSON.stringify(list)); } catch (e) { /* ignore */ }
+      return {};
+    },
     staff: {
+      async stats() {
+        const ago = (d) => Date.now() - d * 86400e3;
+        const orders = read();
+        const recent = orders.filter((o) => new Date(o.created_at) >= ago(30) && o.status !== 'cancelled');
+        const sum = (src) => { const l = recent.filter((o) => (o.source || 'web') === src); return { count: l.length, sum: l.reduce((s, o) => s + o.total, 0) }; };
+        const installs = readI();
+        return later({
+          installs: {
+            total: installs.length,
+            d7: installs.filter((i) => new Date(i.created_at) >= ago(7)).length,
+            d30: installs.filter((i) => new Date(i.created_at) >= ago(30)).length,
+            active30: installs.filter((i) => new Date(i.last_seen) >= ago(30)).length,
+          },
+          orders30: { app: sum('app'), web: sum('web') },
+          list: installs.slice().reverse().map((i) => {
+            const mine = orders.filter((o) => o.install_id === i.id).sort((x, y) => new Date(y.created_at) - new Date(x.created_at));
+            return { ...i, orders: mine.length, last_order_at: mine[0] ? mine[0].created_at : null, phone: mine[0] ? mine[0].phone : null, name: (mine.find((o) => o.customer_name) || {}).customer_name || null };
+          }),
+        });
+      },
       async login(login, password) {
         if (login !== 'demo' || password !== 'demo') throw Object.assign(new Error('В демо-режиме логин demo, пароль demo'), { status: 401 });
         try { localStorage.setItem(SESSION, 'demo'); } catch (e) { /* ignore */ }

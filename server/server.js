@@ -53,6 +53,13 @@ db.exec(`
     staff_id integer not null references staff(id) on delete cascade,
     expires_at integer not null
   );
+  create table if not exists installs (
+    id text primary key,
+    created_at text not null,
+    last_seen text not null,
+    platform text,
+    launches integer not null default 1
+  );
   create table if not exists push_subs (
     endpoint text primary key,
     staff_id integer not null references staff(id) on delete cascade,
@@ -60,7 +67,15 @@ db.exec(`
   );
 `);
 
+// Миграции для баз, созданных до появления колонок.
+const orderCols = db.prepare('pragma table_info(orders)').all().map((c) => c.name);
+if (!orderCols.includes('source')) db.exec("alter table orders add column source text not null default 'web'");
+if (!orderCols.includes('install_id')) db.exec('alter table orders add column install_id text');
+db.exec('create index if not exists orders_install on orders (install_id)');
+
 const STATUSES = ['new', 'cooking', 'ready', 'done', 'cancelled'];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const PLATFORMS = ['android', 'ios', 'desktop', 'other'];
 const nowIso = () => new Date().toISOString();
 const moscowDay = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(d);
 
@@ -225,12 +240,14 @@ function createOrder(body, ip) {
   const day = moscowDay();
   // Короткий номер заказа, с 1 каждый день. Node однопоточный, поэтому гонок нет.
   const number = (db.prepare('select max(number) n from orders where day = ?').get(day).n || 0) + 1;
-  db.prepare(`insert into orders (id, day, number, created_at, updated_at, status, customer_name, phone, pickup_at, comment, items, total, consent_at, consent_version, ip)
-              values (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+  const source = body.source === 'app' ? 'app' : 'web';
+  const installId = UUID.test(String(body.install_id || '')) ? body.install_id : null;
+  db.prepare(`insert into orders (id, day, number, created_at, updated_at, status, customer_name, phone, pickup_at, comment, items, total, consent_at, consent_version, ip, source, install_id)
+              values (?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, day, number, now, now,
       String(body.name || '').trim().slice(0, 60) || null, phone, pickupAt,
       String(body.comment || '').trim().slice(0, 500) || null,
-      JSON.stringify(items), total, now, CONSENT_VERSION, ip);
+      JSON.stringify(items), total, now, CONSENT_VERSION, ip, source, installId);
   return rowToOrder(db.prepare('select * from orders where id = ?').get(id));
 }
 
@@ -310,6 +327,44 @@ route('GET', /^\/api\/staff\/stream$/, (req, m, res) => {
   streams.add(res);
   req.on('close', () => streams.delete(res));
   return undefined;
+});
+
+// Установки приложения: случайный id устройства, без персональных данных.
+route('POST', /^\/api\/installs$/, async (req) => {
+  if (limited(`install:${clientIp(req)}`, 20, 10 * 60e3)) throw new HttpError(429, 'Слишком много запросов');
+  const { id, platform } = await readJson(req);
+  if (!UUID.test(String(id || ''))) throw new HttpError(400, 'Некорректный id');
+  const p = PLATFORMS.includes(platform) ? platform : 'other';
+  const now = nowIso();
+  db.prepare(`insert into installs (id, created_at, last_seen, platform) values (?, ?, ?, ?)
+              on conflict(id) do update set last_seen = excluded.last_seen, launches = launches + 1`).run(id, now, now, p);
+  return { ok: true };
+});
+
+route('GET', /^\/api\/staff\/stats$/, (req) => {
+  requireStaff(req);
+  const ago = (days) => new Date(Date.now() - days * 86400e3).toISOString();
+  const count = (sql, ...a) => db.prepare(sql).get(...a).n;
+  const bySource = Object.fromEntries(db.prepare(`select source, count(*) n, coalesce(sum(total), 0) sum from orders
+                                                  where created_at >= ? and status != 'cancelled' group by source`).all(ago(30))
+    .map((r) => [r.source, { count: r.n, sum: r.sum }]));
+  const list = db.prepare(`
+    select i.id, i.created_at, i.last_seen, i.platform, i.launches,
+           (select count(*) from orders o where o.install_id = i.id) orders,
+           (select max(created_at) from orders o where o.install_id = i.id) last_order_at,
+           (select phone from orders o where o.install_id = i.id and phone is not null order by created_at desc limit 1) phone,
+           (select customer_name from orders o where o.install_id = i.id and customer_name is not null order by created_at desc limit 1) name
+    from installs i order by i.created_at desc limit 300`).all();
+  return {
+    installs: {
+      total: count('select count(*) n from installs'),
+      d7: count('select count(*) n from installs where created_at >= ?', ago(7)),
+      d30: count('select count(*) n from installs where created_at >= ?', ago(30)),
+      active30: count('select count(*) n from installs where last_seen >= ?', ago(30)),
+    },
+    orders30: { app: bySource.app || { count: 0, sum: 0 }, web: bySource.web || { count: 0, sum: 0 } },
+    list: list.map((r) => ({ ...r })),
+  };
 });
 
 route('GET', /^\/api\/staff\/push\/key$/, (req) => { requireStaff(req); return { publicKey: vapid.publicKey }; });
