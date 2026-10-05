@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Меню кафе «Улётное»</title>
+  <meta name="description" content="Меню кафе «Улётное»: бургеры, шаурма, сувлаки, гирос, хот-доги, фритюр и напитки.">
+  <meta name="theme-color" content="#172136">
+  <link rel="icon" href="img/icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="hero">
+    <img class="logo" src="img/logo.jpg" alt="Кафе «Улётное»" width="800" height="336">
+    <p class="tagline">Выбери свой бургер!</p>
+  </header>
+
+  <nav class="tabs" id="tabs" aria-label="Разделы меню"></nav>
+
+  <main id="menu">
+    <p class="loading">Загружаем меню…</p>
+  </main>
+
+  <footer class="footer" id="footer"></footer>
+
+  <div class="sheet" id="sheet" hidden>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <button type="button" class="sheet-close" aria-label="Закрыть">×</button>
+      <div id="sheet-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
