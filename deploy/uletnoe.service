@@ -1,0 +1,20 @@
+[Unit]
+Description=Uletnoe orders API
+After=network.target
+
+[Service]
+User=uletnoe
+Group=uletnoe
+EnvironmentFile=/etc/uletnoe.env
+WorkingDirectory=/opt/uletnoe/server
+ExecStart=/usr/local/bin/node --disable-warning=ExperimentalWarning server.js
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/uletnoe
+
+[Install]
+WantedBy=multi-user.target

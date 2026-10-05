@@ -1,5 +1,5 @@
 // Меню рендерится из menu.json. Чтобы поменять блюда или цены, правьте только menu.json.
-// Корзина и заказы включаются, когда в config.js заполнены настройки Supabase.
+// Заказы уходят на свой сервер (/api) или, на GitHub Pages, в демо-режим (см. config.js и api-client.js).
 (function () {
   const menuEl = document.getElementById('menu');
   const tabsEl = document.getElementById('tabs');
@@ -13,11 +13,9 @@
   const CART_KEY = 'uletnoe.cart.v1';
   const ORDER_KEY = 'uletnoe.order.v1';
 
-  const cfg = window.ULETNOE_CONFIG || {};
-  const db = cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase
-    ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, { auth: { persistSession: false } })
-    : null;
-  const ordering = !!db;
+  const api = window.UletnoeAPI;
+  const ordering = !!api;
+  const COOKIE_KEY = 'uletnoe.cookies.v1';
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -208,7 +206,7 @@
 
   // ---------- Оформление ----------
 
-  const form = { name: '', phone: '', when: 'asap', time: '', comment: '' };
+  const form = { name: '', phone: '', when: 'asap', time: '', comment: '', consent: false };
 
   function normalizePhone(raw) {
     let d = String(raw).replace(/\D/g, '');
@@ -280,7 +278,13 @@
             <span>Комментарий <small>(необязательно)</small></span>
             <textarea id="co-comment" name="comment" rows="2" maxlength="500" placeholder="Например, без лука">${esc(form.comment)}</textarea>
           </label>
+          <label class="consent">
+            <input id="co-consent" name="consent" type="checkbox" ${form.consent ? 'checked' : ''}>
+            <span>Даю <a href="legal/consent.html" target="_blank" rel="noopener">согласие на обработку персональных данных</a>
+            в соответствии с <a href="legal/privacy.html" target="_blank" rel="noopener">политикой</a></span>
+          </label>
           <p class="pay-note">Самовывоз${cafe.address ? `: ${esc(cafe.address)}` : ''}. Оплата на кассе при получении.</p>
+          ${api.mode === 'demo' ? '<p class="demo-note">Демо-режим: заказ никуда не отправится. Его видно на странице <a href="admin/" target="_blank">/admin/</a> в этом же браузере (логин demo, пароль demo).</p>' : ''}
           ${error ? `<p class="form-error" role="alert">${esc(error)}</p>` : ''}
           <button type="submit" class="sheet-price action" ${sending ? 'disabled' : ''}>${sending ? 'Отправляем…' : `Заказать за ${money(sum)}`}</button>
         </form>`;
@@ -290,7 +294,7 @@
       }));
       const f = sheetBody.querySelector('form');
       f.addEventListener('input', (e) => {
-        if (e.target.name in form) form[e.target.name] = e.target.value;
+        if (e.target.name in form) form[e.target.name] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
         if (error) { error = ''; const el = f.querySelector('.form-error'); if (el) el.remove(); }
       });
       sheetBody.querySelectorAll('[data-when]').forEach((b) => b.addEventListener('click', () => {
@@ -311,21 +315,24 @@
         if (d < new Date(Date.now() + 10 * 60e3)) { error = 'Выберите время хотя бы на 10 минут позже текущего.'; draw(); return; }
         pickupAt = d.toISOString();
       }
+      if (!form.consent) { error = 'Чтобы оформить заказ, нужно согласие на обработку персональных данных.'; draw(); return; }
       const { lines } = cartTotals();
       error = ''; sending = true; draw();
-      const { data, error: err } = await db.rpc('place_order', {
-        p_phone: phone,
-        p_items: lines.map((l) => ({ id: l.id, name: l.item.name, variant: l.variant || null, price: l.price, qty: l.qty })),
-        p_name: form.name.trim() || null,
-        p_pickup_at: pickupAt,
-        p_comment: form.comment.trim() || null,
-      });
-      sending = false;
-      if (err || !data) {
-        error = err && err.code === '22023' ? err.message : 'Не получилось отправить заказ. Проверьте интернет и попробуйте ещё раз.';
-        draw();
+      let data;
+      try {
+        data = await api.placeOrder({
+          phone,
+          items: lines.map((l) => ({ id: l.id, name: l.item.name, variant: l.variant || null, price: l.price, qty: l.qty })),
+          name: form.name.trim() || null,
+          pickup_at: pickupAt,
+          comment: form.comment.trim() || null,
+          consent: true,
+        });
+      } catch (e) {
+        sending = false; error = e.message; draw();
         return;
       }
+      sending = false;
       cart = []; saveCart();
       form.comment = '';
       lastOrder = { id: data.id, number: data.number, total: data.total, status: 'new', pickupAt, at: Date.now() };
@@ -341,9 +348,13 @@
 
   let pollTimer = null;
   async function refreshOrder() {
-    if (!lastOrder || !db) return;
-    const { data } = await db.rpc('order_status', { p_id: lastOrder.id });
-    if (data && data.status && data.status !== lastOrder.status) {
+    if (!lastOrder || !api) return;
+    let data;
+    try { data = await api.orderStatus(lastOrder.id); } catch (e) {
+      if (e.status === 404) { lastOrder = null; store.set(ORDER_KEY, null); renderBar(); }
+      return;
+    }
+    if (lastOrder && data.status && data.status !== lastOrder.status) {
       lastOrder.status = data.status;
       store.set(ORDER_KEY, lastOrder);
       renderBar();
@@ -403,6 +414,7 @@
       cafe.hours && `<p>${esc(cafe.hours)}</p>`,
       tel && `<p>${tel}</p>`,
       cafe.note && `<p>${esc(cafe.note)}</p>`,
+      '<p><a href="legal/privacy.html">Политика обработки персональных данных</a></p>',
     ].filter(Boolean).join('');
 
     // Убираем из корзины то, чего больше нет в меню.
@@ -428,6 +440,29 @@
     menuEl.querySelectorAll('section').forEach((s) => obs.observe(s));
     if (links[0]) links[0].classList.add('active');
   }
+
+  // ---------- Cookie-баннер ----------
+
+  function cookieBanner() {
+    if (store.get(COOKIE_KEY, null)) return;
+    const el = document.createElement('div');
+    el.className = 'cookie';
+    el.setAttribute('role', 'region');
+    el.setAttribute('aria-label', 'Cookie');
+    el.innerHTML = `
+      <p>Мы используем cookie и локальное хранилище браузера, чтобы работали корзина и статус заказа.
+      Сторонней аналитики и рекламы на сайте нет. Продолжая пользоваться сайтом, вы соглашаетесь с этим.
+      <a href="legal/privacy.html" target="_blank" rel="noopener">Подробнее</a></p>
+      <button type="button" class="cookie-ok">Хорошо</button>`;
+    el.querySelector('button').addEventListener('click', () => {
+      store.set(COOKIE_KEY, { accepted: new Date().toISOString() });
+      el.remove();
+      document.body.classList.remove('has-cookie');
+    });
+    document.body.appendChild(el);
+    document.body.classList.add('has-cookie');
+  }
+  cookieBanner();
 
   fetch('menu.json', { cache: 'no-cache' })
     .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })

@@ -1,0 +1,10 @@
+{
+  "name": "uletnoe-server",
+  "private": true,
+  "description": "Сервер заказов кафе «Улётное»: Node.js без внешних зависимостей",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  }
+}

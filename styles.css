@@ -110,7 +110,7 @@ body.locked { overflow: hidden; }
   width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
   background: var(--bg-2); color: var(--text); font-size: 24px; line-height: 1;
 }
-.sheet-photo { margin: -4px 0 12px; border-radius: 18px; overflow: hidden; background: var(--photo); aspect-ratio: 3 / 2; }
+.sheet-photo { margin: -4px auto 12px; border-radius: 18px; overflow: hidden; background: var(--photo); aspect-ratio: 16 / 10; max-height: 30vh; max-width: 100%; }
 .sheet-photo img { width: 100%; height: 100%; object-fit: contain; }
 .sheet-name { margin: 0 44px 2px 0; font-size: 22px; font-weight: 900; text-wrap: balance; }
 .sheet-weight { margin: 0 0 10px; color: var(--muted); font-weight: 600; }
@@ -211,3 +211,31 @@ button.sheet-price:focus-visible { outline: 3px solid #fff; outline-offset: 2px;
 .order-steps { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0 0 16px; padding: 0; }
 .order-steps li { padding: 8px 4px; border-radius: 10px; background: var(--bg-2); color: var(--muted); text-align: center; font-size: 13px; font-weight: 700; }
 .order-steps li.on { background: var(--orange-soft); color: var(--orange); }
+
+/* Кнопка действия во всплывающем окне всегда видна внизу, без прокрутки */
+.sheet-price.action {
+  position: sticky; bottom: 0; z-index: 1;
+  box-shadow: 0 -16px 14px var(--bg), 0 12px 0 12px var(--bg);
+}
+
+.consent { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--muted); cursor: pointer; }
+.consent input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--orange); }
+.consent a, .pay-note a, .demo-note a, .cookie a { color: var(--text); }
+.demo-note { margin: 0; padding: 10px 12px; border-radius: 12px; background: rgba(246, 195, 59, .12); color: var(--yellow); font-size: 13px; font-weight: 600; }
+
+/* Cookie-баннер */
+.cookie {
+  position: fixed; z-index: 45; left: 50%; transform: translateX(-50%);
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  width: min(560px, calc(100% - 32px));
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border-radius: 18px;
+  background: var(--bg-2); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+}
+.cookie p { margin: 0; font-size: 12px; line-height: 1.4; color: var(--muted); }
+.cookie-ok {
+  flex: none; border: 0; border-radius: 999px; padding: 10px 16px; cursor: pointer;
+  background: var(--orange); color: #fff; font: 800 14px/1 Montserrat, system-ui, sans-serif;
+}
+body.has-cookie .cart-bar { bottom: calc(110px + env(safe-area-inset-bottom, 0px)); }
+body.has-cookie main { padding-bottom: 120px; }

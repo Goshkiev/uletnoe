@@ -1,7 +1,7 @@
 // «Заказы»: экран кафе и приложение управляющего. Новые заказы приходят мгновенно и пищат, пока их не возьмут в работу.
 (function () {
   const app = document.getElementById('app');
-  const cfg = window.ULETNOE_CONFIG || {};
+  const api = window.UletnoeAPI;
   const PREF_SOUND = 'uletnoe.admin.sound';
 
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -12,13 +12,11 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
   };
 
-  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !window.supabase) {
-    app.innerHTML = `<div class="center card-box"><h1>Приём заказов не настроен</h1>
-      <p class="muted">Заполните config.js по инструкции SETUP.md в репозитории.</p></div>`;
+  if (!api) {
+    app.innerHTML = `<div class="center card-box"><h1>Приём заказов выключен</h1>
+      <p class="muted">В config.js стоит api: 'off'.</p></div>`;
     return;
   }
-
-  const db = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
@@ -30,7 +28,8 @@
       <form class="center card-box login" novalidate>
         <img src="icon-192.png" alt="" width="72" height="72">
         <h1>Заказы «Улётного»</h1>
-        <label class="field"><span>E-mail</span><input id="login-email" type="email" autocomplete="username" required></label>
+        ${api.mode === 'demo' ? '<p class="demo-note">Демо-режим: здесь видны заказы, оформленные на сайте в этом же браузере. Логин demo, пароль demo.</p>' : ''}
+        <label class="field"><span>Логин</span><input id="login-email" type="text" autocapitalize="none" autocomplete="username" required></label>
         <label class="field"><span>Пароль</span><input id="login-password" type="password" autocomplete="current-password" required></label>
         ${message ? `<p class="form-error" role="alert">${esc(message)}</p>` : ''}
         <button type="submit" class="btn primary">Войти</button>
@@ -40,12 +39,13 @@
       e.preventDefault();
       const btn = form.querySelector('button');
       btn.disabled = true; btn.textContent = 'Входим…';
-      const { error } = await db.auth.signInWithPassword({
-        email: form.querySelector('#login-email').value.trim(),
-        password: form.querySelector('#login-password').value,
-      });
-      if (error) showLogin('Неверный e-mail или пароль.');
-      else start();
+      try {
+        await api.staff.login(form.querySelector('#login-email').value.trim(), form.querySelector('#login-password').value);
+      } catch (err) {
+        showLogin(err.message);
+        return;
+      }
+      start();
     });
     form.querySelector('#login-email').focus();
   }
@@ -112,6 +112,18 @@
     b.setAttribute('aria-pressed', String(soundOn));
   }
 
+  // Push: уведомление придёт, даже когда приложение закрыто. Сами данные заказа через push не передаются.
+  async function enablePush() {
+    try {
+      if (api.mode !== 'server' || !('PushManager' in window) || Notification.permission !== 'granted') return;
+      const key = await api.staff.pushKey();
+      const reg = await navigator.serviceWorker.ready;
+      const raw = Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), (c) => c.charCodeAt(0));
+      const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw });
+      await api.staff.pushSubscribe(sub.toJSON());
+    } catch (e) { /* push недоступен в этом браузере */ }
+  }
+
   // ---------- Заказы ----------
 
   const orders = new Map();
@@ -135,10 +147,9 @@
   function flash(id) { flashId = id; setTimeout(() => { flashId = null; }, 4000); }
 
   async function load() {
-    const since = new Date(Date.now() - 24 * 3600e3).toISOString();
-    const { data, error } = await db.from('orders').select('*').gte('created_at', since).order('created_at', { ascending: true });
-    if (error) {
-      if (error.status === 401 || /JWT/i.test(error.message || '')) return showLogin('Сессия истекла, войдите снова.');
+    let data;
+    try { data = await api.staff.orders(); } catch (e) {
+      if (e.status === 401) return showLogin('Сессия истекла, войдите снова.');
       setConn(false);
       return;
     }
@@ -150,7 +161,7 @@
   function stopLive() {
     timers.forEach(clearInterval);
     timers = [];
-    if (channel) { db.removeChannel(channel); channel = null; }
+    if (channel) { channel(); channel = null; }
   }
 
   function setConn(ok) {
@@ -160,14 +171,10 @@
 
   function startLive() {
     stopLive();
-    channel = db.channel('orders-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (payload) => {
-        if (payload.new && payload.new.id) { upsert(payload.new, true); render(); }
-      })
-      .subscribe((status) => {
-        setConn(status === 'SUBSCRIBED');
-        if (status === 'SUBSCRIBED') load();
-      });
+    channel = api.staff.stream(
+      (order) => { upsert(order, true); render(); },
+      (ok) => { setConn(ok); if (ok) load(); },
+    );
     // Подстраховка: раз в 30 секунд сверяемся с базой, вдруг что-то пропустили.
     timers.push(setInterval(load, 30000));
     // Пищим, пока есть новые заказы, которые никто не взял.
@@ -184,8 +191,10 @@
     const prev = o.status;
     o.status = status;
     render();
-    const { error } = await db.from('orders').update({ status }).eq('id', id);
-    if (error) { o.status = prev; render(); alertBar('Не удалось сохранить. Проверьте интернет.'); }
+    try { await api.staff.setStatus(id, status); } catch (e) {
+      o.status = prev; render();
+      if (e.status === 401) showLogin('Сессия истекла, войдите снова.'); else alertBar('Не удалось сохранить. Проверьте интернет.');
+    }
   }
 
   function alertBar(text) {
@@ -278,12 +287,6 @@
   }
 
   async function start() {
-    const { data: staff, error } = await db.rpc('is_staff');
-    if (error || !staff) {
-      const { data } = await db.auth.getUser();
-      await db.auth.signOut();
-      return showLogin(`У ${data && data.user ? data.user.email : 'этого аккаунта'} нет доступа к заказам. Добавьте e-mail в список сотрудников (SETUP.md).`);
-    }
     app.innerHTML = `
       <header class="topbar">
         <h1>Заказы</h1>
@@ -300,13 +303,14 @@
     document.getElementById('sound-btn').addEventListener('click', () => {
       if (soundOn && !audioReady()) { unlockAudio(); beep(); }
       else { soundOn = !soundOn; pref.set(PREF_SOUND, soundOn ? 'on' : 'off'); if (soundOn) beep(); }
-      if (soundOn && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+      if (soundOn && 'Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(enablePush);
       keepAwake();
       renderSoundBtn();
     });
-    document.getElementById('logout-btn').addEventListener('click', () => db.auth.signOut().then(() => showLogin()));
+    document.getElementById('logout-btn').addEventListener('click', () => api.staff.logout().finally(() => showLogin()));
     renderSoundBtn();
     keepAwake();
+    enablePush();
     firstLoad = true;
     await load();
     startLive();
@@ -316,5 +320,5 @@
     if (document.visibilityState === 'visible' && document.getElementById('board')) { keepAwake(); load(); }
   });
 
-  db.auth.getSession().then(({ data }) => (data.session ? start() : showLogin()));
+  api.staff.me().then((me) => (me ? start() : showLogin())).catch(() => showLogin('Нет связи с сервером.'));
 })();
