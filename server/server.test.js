@@ -103,3 +103,23 @@ test('old orders lose personal data', () => {
   const fresh = db.prepare('select count(*) n from orders where phone is not null').get().n;
   assert.ok(fresh >= 2);
 });
+
+test('app installs are counted and linked to the phone of orders made from the app', async () => {
+  const id = '11111111-2222-4333-8444-555555555555';
+  assert.equal((await post('/api/installs', { id, platform: 'android' })).status, 200);
+  assert.equal((await post('/api/installs', { id, platform: 'android' })).status, 200);
+  assert.equal((await post('/api/installs', { id: 'nope' })).status, 400);
+  await post('/api/orders', order({ phone: '+7 916 000-11-22', name: 'Ира', source: 'app', install_id: id }));
+  await post('/api/orders', order({ phone: '+7 916 000-33-44' }));
+  assert.equal((await fetch(base + '/api/staff/stats')).status, 401);
+  db.prepare("insert or ignore into staff (login, pass_hash, created_at) values ('stats', ?, ?)").run(hashPassword('pw'), new Date().toISOString());
+  const cookie = (await post('/api/staff/login', { login: 'stats', password: 'pw' })).headers.get('set-cookie').split(';')[0];
+  const stats = await (await fetch(base + '/api/staff/stats', { headers: { cookie } })).json();
+  assert.deepEqual(stats.installs, { total: 1, d7: 1, d30: 1, active30: 1 });
+  assert.equal(stats.orders30.app.count, 1);
+  assert.ok(stats.orders30.web.count >= 1);
+  assert.equal(stats.list[0].launches, 2);
+  assert.equal(stats.list[0].orders, 1);
+  assert.equal(stats.list[0].phone, '+79160001122');
+  assert.equal(stats.list[0].name, 'Ира');
+});

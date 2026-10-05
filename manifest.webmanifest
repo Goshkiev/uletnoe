@@ -1,0 +1,16 @@
+{
+  "name": "Кафе «Улётное»",
+  "short_name": "Улётное",
+  "description": "Меню и заказ на самовывоз в кафе «Улётное»",
+  "lang": "ru",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#172136",
+  "theme_color": "#172136",
+  "icons": [
+    { "src": "img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

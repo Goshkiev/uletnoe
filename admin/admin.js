@@ -286,18 +286,79 @@
     }
   }
 
+  // ---------- Статистика установок приложения ----------
+
+  const PLATFORM = { android: 'Android', ios: 'iPhone', desktop: 'Компьютер', other: 'Другое' };
+  const day = (d) => new Date(d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+
+  async function toggleStats() {
+    const btn = document.getElementById('stats-btn');
+    const el = document.getElementById('stats');
+    const show = el.hidden;
+    el.hidden = !show;
+    document.getElementById('board').hidden = show;
+    document.getElementById('history').hidden = show;
+    btn.setAttribute('aria-pressed', String(show));
+    btn.textContent = show ? '← Заказы' : 'Статистика';
+    if (show) renderStats();
+  }
+
+  async function renderStats() {
+    const el = document.getElementById('stats');
+    el.innerHTML = '<p class="muted">Загружаем…</p>';
+    let s;
+    try { s = await api.staff.stats(); } catch (e) {
+      if (e.status === 401) return showLogin('Сессия истекла, войдите снова.');
+      el.innerHTML = '<p class="form-error">Не удалось загрузить статистику.</p>';
+      return;
+    }
+    const tile = (num, label) => `<div class="tile"><b>${num}</b><span>${label}</span></div>`;
+    el.innerHTML = `
+      <h2>Приложение у гостей</h2>
+      <div class="tiles">
+        ${tile(s.installs.total, 'установок всего')}
+        ${tile(s.installs.d7, 'за 7 дней')}
+        ${tile(s.installs.d30, 'за 30 дней')}
+        ${tile(s.installs.active30, 'открывали за 30 дней')}
+      </div>
+      <h2>Заказы за 30 дней</h2>
+      <div class="tiles">
+        ${tile(s.orders30.app.count, `из приложения · ${money(s.orders30.app.sum)}`)}
+        ${tile(s.orders30.web.count, `с сайта · ${money(s.orders30.web.sum)}`)}
+      </div>
+      <h2>Установки</h2>
+      ${s.list.length ? `
+      <div class="table-wrap"><table>
+        <thead><tr><th>Установлено</th><th>Устройство</th><th>Запусков</th><th>Заказов</th><th>Последний заказ</th><th>Клиент</th></tr></thead>
+        <tbody>${s.list.map((i) => `<tr>
+          <td>${day(i.created_at)}</td>
+          <td>${PLATFORM[i.platform] || 'Другое'}</td>
+          <td class="num-cell">${i.launches}</td>
+          <td class="num-cell">${i.orders}</td>
+          <td>${i.last_order_at ? day(i.last_order_at) : '—'}</td>
+          <td>${i.phone ? `${i.name ? `${esc(i.name)} · ` : ''}<a href="tel:${esc(i.phone)}">${esc(prettyPhone(i.phone))}</a>` : '<span class="muted">ещё не заказывал</span>'}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>` : '<p class="empty">Пока никто не установил приложение.</p>'}
+      <p class="muted small">Телефон берётся из последнего заказа, сделанного из приложения. Через 30 дней после заказа телефон стирается вместе с заказом (152-ФЗ).</p>
+      <button type="button" class="btn ghost" id="stats-refresh">Обновить</button>`;
+    document.getElementById('stats-refresh').addEventListener('click', renderStats);
+  }
+
   async function start() {
     app.innerHTML = `
       <header class="topbar">
         <h1>Заказы</h1>
         <span id="conn" class="conn">Подключаемся…</span>
         <span class="spacer"></span>
+        <button type="button" id="stats-btn" class="btn ghost" aria-pressed="false">Статистика</button>
         <button type="button" id="sound-btn" class="btn ghost"></button>
         <button type="button" id="logout-btn" class="btn ghost">Выйти</button>
       </header>
       <p id="alert" class="alert" role="alert" hidden></p>
       <main id="board" class="board"></main>
-      <details id="history" class="history"></details>`;
+      <details id="history" class="history"></details>
+      <section id="stats" class="stats" hidden></section>`;
+    document.getElementById('stats-btn').addEventListener('click', toggleStats);
     document.getElementById('board').addEventListener('click', onBoardClick);
     document.getElementById('history').addEventListener('click', onBoardClick);
     document.getElementById('sound-btn').addEventListener('click', () => {
